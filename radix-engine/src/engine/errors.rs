@@ -130,6 +130,7 @@ pub enum DropFailure {
     Vault,
     Worktop,
     KeyValueStore,
+    ResourceManager,
 }
 
 impl fmt::Display for RuntimeError {

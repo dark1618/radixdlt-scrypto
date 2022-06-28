@@ -704,7 +704,7 @@ impl<'s, S: ReadableSubstateStore> Track<'s, S> {
     }
 
     /// Creates a new resource address.
-    fn new_resource_address(&mut self) -> ResourceAddress {
+    pub fn new_resource_address(&mut self) -> ResourceAddress {
         let resource_address = self
             .id_allocator
             .new_resource_address(self.transaction_hash())

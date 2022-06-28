@@ -87,6 +87,7 @@ pub enum TransientValue {
 pub enum REValue {
     Stored(StoredValue),
     Transient(TransientValue),
+    Resource(ResourceManager),
 }
 
 impl REValue {
@@ -99,6 +100,7 @@ impl REValue {
 
     fn try_drop(self) -> Result<(), DropFailure> {
         match self {
+            REValue::Resource(..) => Err(DropFailure::ResourceManager),
             REValue::Stored(StoredValue::Vault(..)) => Err(DropFailure::Vault),
             REValue::Stored(StoredValue::KeyValueStore { .. }) => Err(DropFailure::KeyValueStore),
             REValue::Stored(StoredValue::Component { .. }) => Err(DropFailure::Component),
@@ -144,6 +146,12 @@ impl Into<REValue> for PreCommittedKeyValueStore {
             store: self,
             child_values: InMemoryChildren::new(),
         })
+    }
+}
+
+impl Into<REValue> for ResourceManager {
+    fn into(self) -> REValue {
+        REValue::Resource(self)
     }
 }
 
@@ -1709,6 +1717,10 @@ where
                 let kv_store_id = self.track.new_kv_store_id();
                 ValueId::Stored(StoredValueId::KeyValueStoreId(kv_store_id))
             }
+            REValue::Resource(..) => {
+                let resource_address = self.track.new_resource_address();
+                ValueId::Resource(resource_address)
+            }
             _ => panic!("Unexpected")
         };
 
@@ -1719,17 +1731,6 @@ where
         );
 
         id
-    }
-
-    fn create_resource(&mut self, resource_manager: ResourceManager) -> ResourceAddress {
-        let resource_address = self.track.create_uuid_value(resource_manager).into();
-
-        self.readable_values.insert(
-            ValueId::Resource(resource_address),
-            REValueLocation::Track { parent: None },
-        );
-
-        resource_address
     }
 
     fn create_package(&mut self, package: ValidatedPackage) -> PackageAddress {
@@ -1765,27 +1766,35 @@ where
     fn native_globalize(&mut self, value_id: &ValueId) {
         let value = self.owned_values.remove(value_id).unwrap().into_inner();
 
-        let (component, child_values) = match value {
+        let (substate, maybe_child_values) = match value {
             REValue::Stored(StoredValue::Component {
                 component,
                 child_values,
-            }) => (component, child_values),
-            _ => panic!("Expected to be a component"),
+            }) => {
+                (SubstateValue::Component(component), Some(child_values))
+            },
+            REValue::Resource(resource_manager) => {
+                (SubstateValue::Resource(resource_manager), None)
+            }
+            _ => panic!("Unexpected"),
         };
 
-        let component_address = match value_id {
-            ValueId::Stored(StoredValueId::Component(component_address)) => *component_address,
-            _ => panic!("Expected to be a component address"),
+        let address = match value_id {
+            ValueId::Stored(StoredValueId::Component(component_address)) => Address::GlobalComponent(*component_address),
+            ValueId::Resource(resource_address) => Address::Resource(*resource_address),
+            _ => panic!("Unexpected"),
         };
 
-        self.track.create_uuid_value_2(component_address, component);
+        self.track.create_uuid_value_2(address.clone(), substate);
 
-        let mut to_store_values = HashMap::new();
-        for (id, cell) in child_values.into_iter() {
-            to_store_values.insert(id, cell.into_inner());
+        if let Some(child_values) = maybe_child_values {
+            let mut to_store_values = HashMap::new();
+            for (id, cell) in child_values.into_iter() {
+                to_store_values.insert(id, cell.into_inner());
+            }
+            self.track
+                .insert_objects_into_component(to_store_values, address.into());
         }
-        self.track
-            .insert_objects_into_component(to_store_values, component_address);
     }
 
     fn data(

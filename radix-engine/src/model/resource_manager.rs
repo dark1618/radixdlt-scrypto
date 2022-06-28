@@ -400,9 +400,14 @@ impl ResourceManager {
 
                 let resource_manager =
                     ResourceManager::new(input.resource_type, input.metadata, input.access_rules)?;
-                let resource_address = system_api.create_resource(resource_manager);
+
+                let resource_id = system_api.native_create(resource_manager);
+                let resource_address = match resource_id {
+                    ValueId::Resource(resource_address) => resource_address,
+                    _ => panic!("Expected to be a resource address")
+                };
+
                 let bucket_id = if let Some(mint_params) = input.mint_params {
-                    let resource_id = ValueId::Resource(resource_address);
                     let mut value = system_api.borrow_native_value(&resource_id);
                     let resource_manager = value.resource_manager();
                     let container =
@@ -413,6 +418,8 @@ impl ResourceManager {
                 } else {
                     None
                 };
+
+                system_api.native_globalize(&resource_id);
 
                 Ok(ScryptoValue::from_typed(&(resource_address, bucket_id)))
             }
